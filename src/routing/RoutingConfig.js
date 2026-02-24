@@ -133,6 +133,39 @@ class RoutingConfig extends EventEmitter {
             `Unknown destination type "${dest.type}". Valid types: ${VALID_DEST_TYPES.join(', ')}`
           );
         }
+
+        // ── Per-type field validation ───────────────────────────────────────
+        // We validate type-specific fields here to reject dangerous values
+        // (path traversal, invalid ports, etc.) before they reach the router.
+
+        if (dest.type === 'filesystem') {
+          // Reject paths that contain traversal sequences. We only allow
+          // simple relative or absolute paths without `..` components.
+          if (dest.path !== undefined) {
+            if (typeof dest.path !== 'string') {
+              throw new Error('"filesystem" destination "path" must be a string');
+            }
+            if (/\.\./.test(dest.path)) {
+              throw new Error('"filesystem" destination "path" must not contain ".." (path traversal)');
+            }
+          }
+        }
+
+        if (dest.type === 'smtp') {
+          // Require a non-empty host string for SMTP forwarding.
+          if (dest.host !== undefined) {
+            if (typeof dest.host !== 'string' || dest.host.trim() === '') {
+              throw new Error('"smtp" destination "host" must be a non-empty string');
+            }
+          }
+          // Port must be a positive integer in the valid TCP range.
+          if (dest.port !== undefined) {
+            const p = Number(dest.port);
+            if (!Number.isInteger(p) || p < 1 || p > 65535) {
+              throw new Error('"smtp" destination "port" must be an integer between 1 and 65535');
+            }
+          }
+        }
       }
 
       // All destinations passed validation — we can safely update next.
@@ -163,11 +196,20 @@ class RoutingConfig extends EventEmitter {
         // is invalid we fail fast with a clear message — better to reject the
         // whole update now than to silently store a broken pattern that will
         // never match anything (or, worse, throw at evaluation time).
+        //
+        // We also reject patterns that contain constructs commonly associated
+        // with ReDoS (exponential/polynomial backtracking), such as nested
+        // quantifiers on groups that can match the same characters.
         for (const p of patterns) {
           try {
             new RegExp(p);
           } catch {
             throw new Error(`Invalid RegEx pattern: "${p}"`);
+          }
+          // Reject patterns with nested quantifiers (e.g. (a+)+ or (a*)*)
+          // which are the primary source of catastrophic backtracking.
+          if (/\([^)]*[+*][^)]*\)[+*?]/.test(p)) {
+            throw new Error(`Pattern "${p}" contains nested quantifiers that could cause ReDoS`);
           }
         }
       }

@@ -60,12 +60,16 @@ class FilterEngine {
     // Each pattern is treated as a case-insensitive regular expression.
     // We wrap the RegExp constructor in try/catch because RoutingConfig validates
     // patterns on write, but defensive programming here costs almost nothing.
+    //
+    // We cap the input length before regex evaluation to limit the blast radius
+    // of any pattern that could still cause excessive backtracking at runtime.
+    const safeRecipient = recipient.length > 256 ? recipient.slice(0, 256) : recipient;
     const matched = patterns.find((pattern) => {
       try {
         // We compile a new RegExp for each pattern on every call. In practice the
         // pattern list is short (typically < 10 entries) and calls are infrequent
         // enough that caching isn't worth the added complexity.
-        return new RegExp(pattern, 'i').test(recipient);
+        return new RegExp(pattern, 'i').test(safeRecipient);
       } catch {
         // If a pattern somehow failed to compile (shouldn't happen if
         // RoutingConfig validated it), we treat it as a non-match and move on.

@@ -155,4 +155,55 @@ describe('Web API', () => {
     const memDest = res.body.destinations.find((d) => d.type === 'memory');
     expect(memDest.active).toBe(true);
   });
+
+  // ── Security headers ─────────────────────────────────────────────────────────
+  it('responses include X-Content-Type-Options: nosniff', async () => {
+    const res = await request(app).get('/api/messages');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+  });
+
+  it('responses include X-Frame-Options: DENY', async () => {
+    const res = await request(app).get('/api/messages');
+    expect(res.headers['x-frame-options']).toBe('DENY');
+  });
+
+  it('responses include Content-Security-Policy header', async () => {
+    const res = await request(app).get('/api/messages');
+    expect(res.headers['content-security-policy']).toBeDefined();
+  });
+
+  // ── Credential redaction ──────────────────────────────────────────────────────
+  it('GET /api/routing redacts smtp pass field', async () => {
+    routingConfig.set({
+      destinations: [{ type: 'smtp', host: 'relay.example.com', user: 'user', pass: 'secret' }],
+    });
+    const res = await request(app).get('/api/routing');
+    expect(res.status).toBe(200);
+    expect(res.body.destinations[0].pass).toBe('');
+  });
+
+  it('PUT /api/routing response redacts smtp pass field', async () => {
+    const res = await request(app).put('/api/routing').send({
+      destinations: [{ type: 'smtp', host: 'relay.example.com', user: 'user', pass: 'secret' }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.destinations[0].pass).toBe('');
+  });
+
+  // ── Input validation (security) ───────────────────────────────────────────────
+  it('PUT /api/routing returns 400 for filesystem path with traversal', async () => {
+    const res = await request(app).put('/api/routing').send({
+      destinations: [{ type: 'filesystem', path: '../../etc' }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/path traversal/);
+  });
+
+  it('PUT /api/routing returns 400 for nested-quantifier ReDoS pattern', async () => {
+    const res = await request(app).put('/api/routing').send({
+      filter: { mode: 'blacklist', patterns: ['(a+)+'] },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/nested quantifiers/);
+  });
 });
