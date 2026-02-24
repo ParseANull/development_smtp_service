@@ -55,14 +55,43 @@ describe('Router', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('writes a JSON file and returns ["filesystem"]', async () => {
-      const msg = makeMessage('fs-msg');
+    it('writes body content to {prefix}/{timestamp}.html and returns ["filesystem"]', async () => {
+      const msg = {
+        ...makeMessage('fs-msg'),
+        receivedAt: '2026-10-13T14:17:05.001Z',
+      };
       const routed = await router.route(msg, [{ type: 'filesystem', path: tmpDir }]);
       expect(routed).toEqual(['filesystem']);
-      const filePath = path.join(tmpDir, 'fs-msg.json');
+      // to: [{ address: 'recipient@example.com' }] → no '+' → prefix only
+      const filePath = path.join(tmpDir, 'recipient', '20261013-141705001.html');
       expect(fs.existsSync(filePath)).toBe(true);
-      const saved = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      expect(saved.id).toBe('fs-msg');
+      expect(fs.readFileSync(filePath, 'utf8')).toBe('<p>Test</p>');
+    });
+
+    it('creates {prefix}/{suffix} subdirectory for plus-addressed recipient', async () => {
+      const msg = {
+        ...makeMessage('plus-msg'),
+        to: [{ address: 'rusty_gregg+testing@domain.local' }],
+        receivedAt: '2026-10-13T14:17:05.001Z',
+      };
+      const routed = await router.route(msg, [{ type: 'filesystem', path: tmpDir }]);
+      expect(routed).toEqual(['filesystem']);
+      const filePath = path.join(tmpDir, 'rusty_gregg', 'testing', '20261013-141705001.html');
+      expect(fs.existsSync(filePath)).toBe(true);
+    });
+
+    it('uses .txt extension for text-only messages', async () => {
+      const msg = {
+        ...makeMessage('txt-msg'),
+        html: null,
+        text: 'plain body',
+        receivedAt: '2026-10-13T14:17:05.001Z',
+      };
+      const routed = await router.route(msg, [{ type: 'filesystem', path: tmpDir }]);
+      expect(routed).toEqual(['filesystem']);
+      const filePath = path.join(tmpDir, 'recipient', '20261013-141705001.txt');
+      expect(fs.existsSync(filePath)).toBe(true);
+      expect(fs.readFileSync(filePath, 'utf8')).toBe('plain body');
     });
   });
 
