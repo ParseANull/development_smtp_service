@@ -4,6 +4,7 @@ const { SMTPServer } = require('smtp-server');
 const { simpleParser } = require('mailparser');
 const { v4: uuidv4 } = require('uuid');
 const { EventEmitter } = require('events');
+const FilterEngine = require('../routing/FilterEngine');
 
 /**
  * SmtpService wraps an smtp-server instance and emits parsed mail events.
@@ -16,12 +17,17 @@ class SmtpService extends EventEmitter {
    * @param {number} [options.port=2525]
    * @param {boolean} [options.allowInsecureAuth=true]
    * @param {import('../smtp/MessageStore')} options.store
+   * @param {import('../routing/Router')} [options.router]
+   * @param {import('../routing/RoutingConfig')} [options.routingConfig]
    */
-  constructor({ host = '0.0.0.0', port = 2525, allowInsecureAuth = true, store } = {}) {
+  constructor({ host = '0.0.0.0', port = 2525, allowInsecureAuth = true, store, router, routingConfig } = {}) {
     super();
     this.host = host;
     this.port = port;
     this._store = store;
+    this._router = router;
+    this._routingConfig = routingConfig;
+    this._filterEngine = new FilterEngine();
 
     this._server = new SMTPServer({
       allowInsecureAuth,
@@ -77,7 +83,22 @@ class SmtpService extends EventEmitter {
         receivedAt: new Date().toISOString(),
       };
 
-      if (this._store) {
+      if (this._router && this._routingConfig) {
+        // Determine routing based on filter evaluation for each recipient.
+        const cfg = this._routingConfig.get();
+        const recipients = Array.isArray(message.to)
+          ? message.to.map((t) => t.address || t)
+          : [String(message.to || '')];
+
+        // Use the most permissive result: if ANY recipient passes, route to all.
+        const storageOnly = recipients.every((addr) => {
+          const result = this._filterEngine.evaluate(addr, cfg.filter);
+          return result.storageOnly;
+        });
+
+        await this._router.route(message, cfg.destinations, storageOnly);
+      } else if (this._store) {
+        // Fallback: no router configured, just store in memory.
         this._store.add(message);
       }
 

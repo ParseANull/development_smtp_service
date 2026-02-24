@@ -3,6 +3,7 @@
 const express = require('express');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
+const FilterEngine = require('../routing/FilterEngine');
 
 const staticLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -11,13 +12,19 @@ const staticLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const DEFAULT_ROUTING = {
+  destinations: [{ type: 'memory' }],
+  filter: { mode: 'none', patterns: [] },
+};
+
 /**
  * Create and configure the Express application.
- * @param {object} deps - Dependencies (store, smtpConfig)
+ * @param {object} deps - Dependencies (store, smtpConfig, routingConfig)
  * @returns {express.Application}
  */
-function createApp({ store, smtpConfig = {} } = {}) {
+function createApp({ store, smtpConfig = {}, routingConfig } = {}) {
   const app = express();
+  const filterEngine = new FilterEngine();
 
   app.use(express.json());
   app.use(express.static(path.join(__dirname, 'public')));
@@ -56,6 +63,57 @@ function createApp({ store, smtpConfig = {} } = {}) {
         host: smtpConfig.host || '0.0.0.0',
         port: smtpConfig.port || 2525,
       },
+    });
+  });
+
+  // ── Routing & Filtering API ─────────────────────────────────────────────────
+
+  /** GET /api/routing – return current routing + filter configuration */
+  app.get('/api/routing', (req, res) => {
+    res.json(routingConfig ? routingConfig.get() : DEFAULT_ROUTING);
+  });
+
+  /** PUT /api/routing – replace routing + filter configuration */
+  app.put('/api/routing', (req, res) => {
+    if (!routingConfig) return res.status(503).json({ error: 'Routing not configured' });
+    try {
+      routingConfig.set(req.body);
+      res.json(routingConfig.get());
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/routing/test – preview how an email to a given recipient
+   * would be handled under the current routing + filter configuration.
+   *
+   * Body: { "recipient": "user@example.com" }
+   * Response: { recipient, filter: { mode, storageOnly, matchedPattern }, destinations: [{ type, active }] }
+   */
+  app.post('/api/routing/test', (req, res) => {
+    const { recipient } = req.body || {};
+    if (!recipient || typeof recipient !== 'string') {
+      return res.status(400).json({ error: '"recipient" string is required' });
+    }
+
+    const cfg = routingConfig ? routingConfig.get() : DEFAULT_ROUTING;
+    const filterResult = filterEngine.evaluate(recipient, cfg.filter);
+
+    const destinations = cfg.destinations.map((dest) => {
+      const isStorage = ['memory', 'filesystem', 's3', 'azure', 'gcp'].includes(dest.type);
+      const active = !filterResult.storageOnly || isStorage;
+      return { ...dest, active };
+    });
+
+    res.json({
+      recipient,
+      filter: {
+        mode: cfg.filter.mode,
+        storageOnly: filterResult.storageOnly,
+        matchedPattern: filterResult.matchedPattern,
+      },
+      destinations,
     });
   });
 

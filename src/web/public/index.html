@@ -11,6 +11,8 @@
 
   <!-- D3.js -->
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <!-- D3 Sankey plugin -->
+  <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
 
   <style>
     body {
@@ -168,11 +170,63 @@
     .btn-ghost:hover { background: #e8f1ff; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    .config-section { padding: 1.5rem; max-width: 480px; }
+    .config-section { padding: 1.5rem; max-width: 640px; }
     .config-section h3 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; }
     .config-field { margin-bottom: 1rem; }
     .config-field label { display: block; font-size: 0.75rem; font-weight: 600; color: #525252; margin-bottom: 0.25rem; }
     .config-field .value { font-size: 0.875rem; color: #161616; background: #f4f4f4; padding: 0.5rem 0.75rem; }
+    .config-field select,
+    .config-field input[type="text"],
+    .config-field textarea {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 0.875rem;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid #8d8d8d;
+      background: #fff;
+      color: #161616;
+      font-family: inherit;
+    }
+    .config-field textarea { min-height: 80px; resize: vertical; }
+    .config-field select:focus,
+    .config-field input[type="text"]:focus,
+    .config-field textarea:focus { outline: 2px solid #0f62fe; outline-offset: -2px; border-color: transparent; }
+
+    /* Destination editor */
+    .dest-list { list-style: none; margin: 0 0 0.5rem; padding: 0; }
+    .dest-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.75rem;
+      background: #f4f4f4;
+      border: 1px solid #e0e0e0;
+      margin-bottom: 0.25rem;
+      font-size: 0.8125rem;
+    }
+    .dest-item span { flex: 1; font-family: monospace; }
+    .dest-item button { background: none; border: none; color: #da1e28; cursor: pointer; font-size: 1rem; padding: 0 0.25rem; }
+    .dest-add-row { display: flex; gap: 0.5rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .dest-add-row .config-field { flex: 1; min-width: 120px; margin-bottom: 0; }
+
+    /* Routing test panel */
+    .routing-test-panel {
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      padding: 1rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .routing-test-panel h3 { font-size: 0.875rem; font-weight: 600; margin: 0 0 0.75rem; }
+    .routing-test-row { display: flex; gap: 0.5rem; align-items: center; }
+    .routing-test-row input[type="text"] {
+      flex: 1;
+      font-size: 0.875rem;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid #8d8d8d;
+      font-family: inherit;
+    }
+    #sankey-container { margin-top: 1rem; min-height: 160px; }
+    #sankey-container svg { width: 100%; }
 
     .notification {
       position: fixed;
@@ -196,6 +250,7 @@
     <h1>Dev SMTP Service</h1>
     <span class="badge" id="msg-count-badge">0</span>
     <div style="flex:1"></div>
+    <button class="btn btn-ghost" onclick="showView('routing')">⇄ Routing</button>
     <button class="btn btn-ghost" onclick="showView('config')">⚙ Config</button>
     <button class="btn btn-danger" onclick="clearAll()">Clear All</button>
     <button class="btn btn-primary" onclick="loadMessages()">↻ Refresh</button>
@@ -250,6 +305,117 @@
         </div>
       </div>
 
+      <!-- Routing & Filtering view -->
+      <div id="view-routing" style="display:none;flex-direction:column;height:100%;overflow:hidden;">
+        <div class="main-toolbar">
+          <h2>Routing &amp; Filtering</h2>
+          <button class="btn btn-ghost" onclick="showView('message')">← Back</button>
+          <button class="btn btn-primary" onclick="saveRouting()">Save</button>
+        </div>
+        <div class="main-content">
+
+          <!-- Routing destinations -->
+          <div class="config-section" style="padding:0;max-width:100%;">
+            <h3>Destinations</h3>
+            <p style="font-size:0.8125rem;color:#6f6f6f;margin-bottom:1rem;">
+              Configure where captured emails are stored or forwarded. The <strong>memory</strong>
+              destination is the built-in inbox shown in this UI.
+            </p>
+            <ul class="dest-list" id="dest-list"></ul>
+            <div class="dest-add-row" id="dest-add-row">
+              <div class="config-field">
+                <label>Type</label>
+                <select id="new-dest-type" onchange="onDestTypeChange()">
+                  <option value="memory">memory</option>
+                  <option value="filesystem">filesystem</option>
+                  <option value="smtp">smtp (forward)</option>
+                  <option value="s3">s3 (AWS)</option>
+                  <option value="azure">azure (Blob)</option>
+                  <option value="gcp">gcp (Cloud Storage)</option>
+                </select>
+              </div>
+              <!-- Extra fields shown per type -->
+              <div class="config-field" id="dest-field-path" style="display:none;">
+                <label>Path</label>
+                <input type="text" id="new-dest-path" placeholder="/var/mail" />
+              </div>
+              <div class="config-field" id="dest-field-host" style="display:none;">
+                <label>Host</label>
+                <input type="text" id="new-dest-host" placeholder="smtp.sendgrid.net" />
+              </div>
+              <div class="config-field" id="dest-field-port" style="display:none;">
+                <label>Port</label>
+                <input type="text" id="new-dest-port" placeholder="587" style="width:80px;" />
+              </div>
+              <div class="config-field" id="dest-field-user" style="display:none;">
+                <label>User</label>
+                <input type="text" id="new-dest-user" placeholder="apikey" />
+              </div>
+              <div class="config-field" id="dest-field-pass" style="display:none;">
+                <label>Password</label>
+                <input type="text" id="new-dest-pass" placeholder="secret" />
+              </div>
+              <div class="config-field" id="dest-field-bucket" style="display:none;">
+                <label>Bucket</label>
+                <input type="text" id="new-dest-bucket" placeholder="my-email-bucket" />
+              </div>
+              <div class="config-field" id="dest-field-region" style="display:none;">
+                <label>Region</label>
+                <input type="text" id="new-dest-region" placeholder="us-east-1" style="width:120px;" />
+              </div>
+              <div class="config-field" id="dest-field-conn" style="display:none;">
+                <label>Connection String</label>
+                <input type="text" id="new-dest-conn" placeholder="DefaultEndpointsProtocol=https;..." />
+              </div>
+              <div class="config-field" id="dest-field-container" style="display:none;">
+                <label>Container</label>
+                <input type="text" id="new-dest-container" placeholder="emails" />
+              </div>
+              <div style="display:flex;align-items:flex-end;">
+                <button class="btn btn-primary" onclick="addDest()">+ Add</button>
+              </div>
+            </div>
+
+            <hr style="border:none;border-top:1px solid #e0e0e0;margin:1.5rem 0;" />
+
+            <!-- Filtering -->
+            <h3>Filtering</h3>
+            <p style="font-size:0.8125rem;color:#6f6f6f;margin-bottom:1rem;">
+              Control which recipients reach non-storage destinations (e.g. SMTP forwarding).
+            </p>
+            <div class="config-field">
+              <label>Mode</label>
+              <select id="filter-mode" onchange="onFilterModeChange()">
+                <option value="none">none – no filtering</option>
+                <option value="blacklist">blacklist – forward all except matching recipients</option>
+                <option value="whitelist">whitelist – only forward matching recipients</option>
+              </select>
+            </div>
+            <div class="config-field" id="filter-patterns-field">
+              <label>Exception patterns (one RegEx per line)</label>
+              <textarea id="filter-patterns" placeholder="blocked@example\.com&#10;.*@spam\.com"></textarea>
+            </div>
+
+            <hr style="border:none;border-top:1px solid #e0e0e0;margin:1.5rem 0;" />
+
+            <!-- Routing test -->
+            <h3>Test Routing</h3>
+            <p style="font-size:0.8125rem;color:#6f6f6f;margin-bottom:0.75rem;">
+              Type a recipient email address to preview how it will be handled.
+            </p>
+            <div class="routing-test-panel">
+              <div class="routing-test-row">
+                <input type="text" id="test-recipient" placeholder="user@example.com"
+                  onkeydown="if(event.key==='Enter') testRouting()" />
+                <button class="btn btn-primary" onclick="testRouting()">Test</button>
+              </div>
+              <div id="sankey-container"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
     </main>
   </div>
 
@@ -259,6 +425,8 @@
     // ── State ──────────────────────────────────────────────────────────────────
     let messages = [];
     let selectedId = null;
+    let routingData = { destinations: [{ type: 'memory' }], filter: { mode: 'none', patterns: [] } };
+    let pendingDests = [];   // local edit buffer for destinations
 
     // ── Boot ───────────────────────────────────────────────────────────────────
     loadMessages();
@@ -286,6 +454,21 @@
         document.getElementById('cfg-port').textContent = cfg.smtp?.port || '–';
       } catch (e) {
         console.error('Failed to load config', e);
+      }
+    }
+
+    async function loadRouting() {
+      try {
+        const res = await fetch('/api/routing');
+        routingData = await res.json();
+        pendingDests = JSON.parse(JSON.stringify(routingData.destinations));
+        renderDestList();
+        const modeEl = document.getElementById('filter-mode');
+        modeEl.value = routingData.filter.mode || 'none';
+        document.getElementById('filter-patterns').value = (routingData.filter.patterns || []).join('\n');
+        onFilterModeChange();
+      } catch (e) {
+        console.error('Failed to load routing config', e);
       }
     }
 
@@ -410,6 +593,256 @@
         .attr('fill', '#0f62fe');
     }
 
+    // ── Routing UI ─────────────────────────────────────────────────────────────
+    function renderDestList() {
+      const ul = document.getElementById('dest-list');
+      ul.innerHTML = '';
+      pendingDests.forEach((dest, idx) => {
+        const li = document.createElement('li');
+        li.className = 'dest-item';
+        li.innerHTML = `<span>${destLabel(dest)}</span>
+          <button title="Remove" onclick="removeDest(${idx})">✕</button>`;
+        ul.appendChild(li);
+      });
+    }
+
+    function destLabel(dest) {
+      switch (dest.type) {
+        case 'memory': return 'memory (built-in inbox)';
+        case 'filesystem': return `filesystem  →  ${dest.path || './mail'}`;
+        case 'smtp': return `smtp forward  →  ${dest.host || '?'}:${dest.port || 587}`;
+        case 's3': return `s3  →  ${dest.bucket || '?'} (${dest.region || 'us-east-1'})`;
+        case 'azure': return `azure  →  ${dest.container || 'emails'}`;
+        case 'gcp': return `gcp  →  ${dest.bucket || '?'}`;
+        default: return dest.type;
+      }
+    }
+
+    function removeDest(idx) {
+      pendingDests.splice(idx, 1);
+      renderDestList();
+    }
+
+    function onDestTypeChange() {
+      const type = document.getElementById('new-dest-type').value;
+      const show = (id, visible) => {
+        document.getElementById(id).style.display = visible ? '' : 'none';
+      };
+      show('dest-field-path', type === 'filesystem');
+      show('dest-field-host', type === 'smtp');
+      show('dest-field-port', type === 'smtp');
+      show('dest-field-user', type === 'smtp');
+      show('dest-field-pass', type === 'smtp');
+      show('dest-field-bucket', type === 's3' || type === 'gcp');
+      show('dest-field-region', type === 's3');
+      show('dest-field-conn', type === 'azure');
+      show('dest-field-container', type === 'azure');
+    }
+
+    function addDest() {
+      const type = document.getElementById('new-dest-type').value;
+      const dest = { type };
+      const v = (id) => document.getElementById(id).value.trim();
+      if (type === 'filesystem') {
+        if (v('new-dest-path')) dest.path = v('new-dest-path');
+      } else if (type === 'smtp') {
+        if (v('new-dest-host')) dest.host = v('new-dest-host');
+        if (v('new-dest-port')) dest.port = parseInt(v('new-dest-port'), 10) || 587;
+        if (v('new-dest-user')) dest.user = v('new-dest-user');
+        if (v('new-dest-pass')) dest.pass = v('new-dest-pass');
+      } else if (type === 's3') {
+        if (v('new-dest-bucket')) dest.bucket = v('new-dest-bucket');
+        if (v('new-dest-region')) dest.region = v('new-dest-region');
+      } else if (type === 'azure') {
+        if (v('new-dest-conn')) dest.connectionString = v('new-dest-conn');
+        if (v('new-dest-container')) dest.container = v('new-dest-container');
+      } else if (type === 'gcp') {
+        if (v('new-dest-bucket')) dest.bucket = v('new-dest-bucket');
+      }
+      pendingDests.push(dest);
+      renderDestList();
+      // Reset extra fields
+      ['new-dest-path','new-dest-host','new-dest-port','new-dest-user','new-dest-pass',
+       'new-dest-bucket','new-dest-region','new-dest-conn','new-dest-container'].forEach(id => {
+        document.getElementById(id).value = '';
+      });
+    }
+
+    function onFilterModeChange() {
+      const mode = document.getElementById('filter-mode').value;
+      document.getElementById('filter-patterns-field').style.display = mode === 'none' ? 'none' : '';
+    }
+
+    async function saveRouting() {
+      const mode = document.getElementById('filter-mode').value;
+      const patternsRaw = document.getElementById('filter-patterns').value.trim();
+      const patterns = patternsRaw ? patternsRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
+
+      try {
+        const res = await fetch('/api/routing', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ destinations: pendingDests, filter: { mode, patterns } }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          alert('Save failed: ' + (err.error || res.statusText));
+          return;
+        }
+        routingData = await res.json();
+        notify('Routing configuration saved');
+      } catch (e) {
+        alert('Save failed: ' + e.message);
+      }
+    }
+
+    // ── Routing test & Sankey diagram ──────────────────────────────────────────
+    async function testRouting() {
+      const recipient = document.getElementById('test-recipient').value.trim();
+      if (!recipient) return;
+
+      try {
+        const res = await fetch('/api/routing/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recipient }),
+        });
+        const result = await res.json();
+        if (!res.ok) {
+          alert(result.error || 'Test failed');
+          return;
+        }
+        renderSankey(result);
+      } catch (e) {
+        alert('Test failed: ' + e.message);
+      }
+    }
+
+    function renderSankey(result) {
+      if (typeof d3 === 'undefined' || typeof d3.sankey === 'undefined') {
+        renderSankeyFallback(result);
+        return;
+      }
+
+      const container = document.getElementById('sankey-container');
+      container.innerHTML = '';
+
+      const W = container.clientWidth || 560;
+      const H = Math.max(160, result.destinations.length * 40 + 80);
+      const margin = { top: 10, right: 160, bottom: 10, left: 10 };
+
+      const svg = d3.select(container).append('svg')
+        .attr('width', W)
+        .attr('height', H);
+
+      // Build graph nodes & links
+      // Nodes: 0=Email, 1=Filter, 2..N=Destinations
+      const DEST_COLOR_ACTIVE = '#198038';
+      const DEST_COLOR_INACTIVE = '#8d8d8d';
+      const FILTER_COLOR = result.filter.storageOnly ? '#da1e28' : '#0f62fe';
+
+      const activeDests = result.destinations.filter(d => d.active);
+      const inactiveDests = result.destinations.filter(d => !d.active);
+
+      const nodes = [
+        { name: `📧 ${result.recipient}` },
+        { name: filterNodeLabel(result.filter) },
+        ...activeDests.map(d => ({ name: destShortLabel(d), active: true })),
+        ...inactiveDests.map(d => ({ name: destShortLabel(d), active: false })),
+      ];
+
+      const links = [];
+      // Email → Filter
+      links.push({ source: 0, target: 1, value: 1 });
+      // Filter → each destination
+      activeDests.forEach((_, i) => {
+        links.push({ source: 1, target: 2 + i, value: 1 });
+      });
+      // Filter → inactive destinations (shown grayed)
+      inactiveDests.forEach((_, i) => {
+        links.push({ source: 1, target: 2 + activeDests.length + i, value: 0.3 });
+      });
+
+      const sankeyGen = d3.sankey()
+        .nodeId(d => d.index)
+        .nodeWidth(14)
+        .nodePadding(10)
+        .extent([[margin.left, margin.top], [W - margin.right, H - margin.bottom]]);
+
+      const { nodes: snodes, links: slinks } = sankeyGen({ nodes: nodes.map((n, i) => ({ ...n, index: i })), links });
+
+      // Links
+      svg.append('g').selectAll('path')
+        .data(slinks)
+        .join('path')
+        .attr('d', d3.sankeyLinkHorizontal())
+        .attr('stroke-width', d => Math.max(1, d.width))
+        .attr('fill', 'none')
+        .attr('stroke', d => {
+          const targetNode = snodes[d.target.index];
+          return targetNode.active === false ? '#c6c6c6' : (d.source.index === 1 ? DEST_COLOR_ACTIVE : '#0f62fe');
+        })
+        .attr('opacity', d => snodes[d.target.index].active === false ? 0.35 : 0.5);
+
+      // Nodes
+      svg.append('g').selectAll('rect')
+        .data(snodes)
+        .join('rect')
+        .attr('x', d => d.x0)
+        .attr('y', d => d.y0)
+        .attr('width', d => d.x1 - d.x0)
+        .attr('height', d => Math.max(4, d.y1 - d.y0))
+        .attr('fill', d => {
+          if (d.index === 0) return '#0f62fe';
+          if (d.index === 1) return FILTER_COLOR;
+          return d.active === false ? '#8d8d8d' : DEST_COLOR_ACTIVE;
+        });
+
+      // Labels
+      svg.append('g').selectAll('text')
+        .data(snodes)
+        .join('text')
+        .attr('x', d => d.x1 + 6)
+        .attr('y', d => (d.y0 + d.y1) / 2)
+        .attr('dy', '0.35em')
+        .attr('font-size', 11)
+        .attr('fill', d => d.active === false ? '#8d8d8d' : '#161616')
+        .text(d => d.name);
+    }
+
+    function renderSankeyFallback(result) {
+      // Text fallback when d3-sankey is unavailable
+      const container = document.getElementById('sankey-container');
+      const active = result.destinations.filter(d => d.active).map(d => destShortLabel(d));
+      const inactive = result.destinations.filter(d => !d.active).map(d => destShortLabel(d));
+      let html = `<div style="font-size:0.8125rem;margin-top:0.75rem;">`;
+      html += `<strong>Filter:</strong> mode=${result.filter.mode}`;
+      if (result.filter.matchedPattern) html += `, matched: <code>${escHtml(result.filter.matchedPattern)}</code>`;
+      html += `<br/><strong>Active destinations:</strong> ${active.length ? active.map(escHtml).join(', ') : '(none)'}`;
+      if (inactive.length) html += `<br/><strong>Inactive:</strong> <span style="color:#8d8d8d">${inactive.map(escHtml).join(', ')}</span>`;
+      html += `</div>`;
+      container.innerHTML = html;
+    }
+
+    function filterNodeLabel(filter) {
+      if (filter.mode === 'none') return '⇄ No filter';
+      const icon = filter.storageOnly ? '🚫' : '✓';
+      const matched = filter.matchedPattern ? ` (${filter.matchedPattern})` : '';
+      return `${icon} ${filter.mode}${matched}`;
+    }
+
+    function destShortLabel(dest) {
+      switch (dest.type) {
+        case 'memory': return '💾 memory';
+        case 'filesystem': return `📁 filesystem`;
+        case 'smtp': return `📤 smtp`;
+        case 's3': return `☁ s3`;
+        case 'azure': return `☁ azure`;
+        case 'gcp': return `☁ gcp`;
+        default: return dest.type;
+      }
+    }
+
     // ── Actions ────────────────────────────────────────────────────────────────
     async function deleteSelected() {
       if (!selectedId) return;
@@ -436,6 +869,8 @@
     function showView(view) {
       document.getElementById('view-message').style.display = view === 'message' ? 'flex' : 'none';
       document.getElementById('view-config').style.display = view === 'config' ? 'flex' : 'none';
+      document.getElementById('view-routing').style.display = view === 'routing' ? 'flex' : 'none';
+      if (view === 'routing') loadRouting();
     }
 
     function notify(msg) {
