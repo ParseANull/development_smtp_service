@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dev SMTP Service</title>
+
+  <!-- Carbon Design System -->
+  <link rel="stylesheet"
+    href="https://1.www.s81c.com/common/carbon/web-components/tag/v2/latest/carbon-components.min.css" />
+
+  <!-- D3.js -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+
+  <style>
+    body {
+      background: var(--cds-background, #f4f4f4);
+      margin: 0;
+      font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
+    }
+    .app-header {
+      background: #161616;
+      color: #fff;
+      padding: 0 2rem;
+      display: flex;
+      align-items: center;
+      height: 3rem;
+      gap: 1rem;
+    }
+    .app-header h1 { font-size: 1rem; font-weight: 600; margin: 0; }
+    .app-header .badge {
+      background: #0f62fe;
+      color: #fff;
+      border-radius: 1rem;
+      padding: 0 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .app-layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      height: calc(100vh - 3rem);
+    }
+    .sidebar {
+      background: #fff;
+      border-right: 1px solid #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar-toolbar {
+      display: flex;
+      align-items: center;
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid #e0e0e0;
+      gap: 0.5rem;
+    }
+    .sidebar-toolbar h2 { font-size: 0.875rem; font-weight: 600; flex: 1; margin: 0; }
+    .sidebar-list {
+      flex: 1;
+      overflow-y: auto;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .sidebar-list li {
+      border-bottom: 1px solid #f4f4f4;
+      cursor: pointer;
+      padding: 0.75rem 1rem;
+      transition: background 0.1s;
+    }
+    .sidebar-list li:hover { background: #e8f1ff; }
+    .sidebar-list li.active { background: #d0e2ff; border-left: 3px solid #0f62fe; }
+    .msg-subject { font-size: 0.875rem; font-weight: 600; color: #161616; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .msg-meta { font-size: 0.75rem; color: #6f6f6f; margin-top: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #6f6f6f;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+    }
+    .main-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .main-toolbar {
+      display: flex;
+      align-items: center;
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid #e0e0e0;
+      background: #fff;
+      gap: 0.5rem;
+    }
+    .main-toolbar h2 { font-size: 0.875rem; font-weight: 600; flex: 1; margin: 0; color: #161616; }
+    .main-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem;
+    }
+    .msg-header-card {
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 0;
+      padding: 1rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .msg-header-card dl { margin: 0; display: grid; grid-template-columns: 80px 1fr; gap: 0.25rem 0.75rem; font-size: 0.875rem; }
+    .msg-header-card dt { color: #6f6f6f; font-weight: 600; }
+    .msg-header-card dd { color: #161616; margin: 0; }
+    .msg-body {
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      padding: 1rem 1.5rem;
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg-body iframe {
+      width: 100%;
+      border: none;
+      min-height: 400px;
+    }
+    .tab-bar {
+      display: flex;
+      border-bottom: 2px solid #e0e0e0;
+      margin-bottom: 1rem;
+    }
+    .tab-bar button {
+      background: none;
+      border: none;
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+      font-size: 0.875rem;
+      color: #6f6f6f;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+    }
+    .tab-bar button.active { color: #0f62fe; border-bottom-color: #0f62fe; font-weight: 600; }
+
+    /* Chart section */
+    #chart-section { background: #fff; border: 1px solid #e0e0e0; padding: 1rem 1.5rem; margin-bottom: 1rem; }
+    #chart-section h3 { font-size: 0.875rem; font-weight: 600; margin: 0 0 0.75rem; }
+    #timeline-chart { width: 100%; height: 140px; }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.375rem 0.75rem;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      border: 1px solid transparent;
+      cursor: pointer;
+      border-radius: 0;
+      gap: 0.25rem;
+    }
+    .btn-primary { background: #0f62fe; color: #fff; }
+    .btn-primary:hover { background: #0353e9; }
+    .btn-danger { background: #da1e28; color: #fff; }
+    .btn-danger:hover { background: #b81921; }
+    .btn-ghost { background: transparent; color: #0f62fe; border-color: #0f62fe; }
+    .btn-ghost:hover { background: #e8f1ff; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .config-section { padding: 1.5rem; max-width: 480px; }
+    .config-section h3 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; }
+    .config-field { margin-bottom: 1rem; }
+    .config-field label { display: block; font-size: 0.75rem; font-weight: 600; color: #525252; margin-bottom: 0.25rem; }
+    .config-field .value { font-size: 0.875rem; color: #161616; background: #f4f4f4; padding: 0.5rem 0.75rem; }
+
+    .notification {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      background: #198038;
+      color: #fff;
+      padding: 0.75rem 1.25rem;
+      font-size: 0.875rem;
+      border-radius: 0;
+      display: none;
+      z-index: 999;
+    }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 32 32" fill="white">
+      <path d="M28 6H4a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h24a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zm-2.2 2L16 14.78 6.2 8zM4 24V9.44l11.43 7.62a1 1 0 0 0 1.14 0L28 9.44V24z"/>
+    </svg>
+    <h1>Dev SMTP Service</h1>
+    <span class="badge" id="msg-count-badge">0</span>
+    <div style="flex:1"></div>
+    <button class="btn btn-ghost" onclick="showView('config')">⚙ Config</button>
+    <button class="btn btn-danger" onclick="clearAll()">Clear All</button>
+    <button class="btn btn-primary" onclick="loadMessages()">↻ Refresh</button>
+  </header>
+
+  <div class="app-layout">
+    <!-- Sidebar: message list -->
+    <nav class="sidebar" id="sidebar">
+      <div class="sidebar-toolbar">
+        <h2>Inbox</h2>
+      </div>
+      <ul class="sidebar-list" id="message-list"></ul>
+      <div class="empty-state" id="empty-state" style="display:none;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 32 32" fill="#c6c6c6">
+          <path d="M28 6H4a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h24a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zm-2.2 2L16 14.78 6.2 8zM4 24V9.44l11.43 7.62a1 1 0 0 0 1.14 0L28 9.44V24z"/>
+        </svg>
+        <p>No messages yet</p>
+        <small>Send an email to this SMTP server</small>
+      </div>
+    </nav>
+
+    <!-- Main panel -->
+    <main class="main-panel" id="main-panel">
+
+      <!-- Message detail view -->
+      <div id="view-message" style="display:flex;flex-direction:column;height:100%;">
+        <div class="main-toolbar">
+          <h2 id="detail-subject">Select a message</h2>
+          <button class="btn btn-danger" id="btn-delete" style="display:none" onclick="deleteSelected()">✕ Delete</button>
+        </div>
+        <div class="main-content" id="detail-content">
+          <div id="chart-section">
+            <h3>Messages received (last 24 h)</h3>
+            <svg id="timeline-chart"></svg>
+          </div>
+          <p style="color:#6f6f6f;font-size:0.875rem;">Select a message from the inbox to view its contents.</p>
+        </div>
+      </div>
+
+      <!-- Config view -->
+      <div id="view-config" style="display:none;flex-direction:column;height:100%;">
+        <div class="main-toolbar">
+          <h2>Configuration</h2>
+          <button class="btn btn-ghost" onclick="showView('message')">← Back</button>
+        </div>
+        <div class="config-section">
+          <h3>SMTP Server Settings</h3>
+          <div class="config-field"><label>Host</label><div class="value" id="cfg-host">–</div></div>
+          <div class="config-field"><label>Port</label><div class="value" id="cfg-port">–</div></div>
+          <br/>
+          <p style="font-size:0.8125rem;color:#6f6f6f;">Configure via environment variables: <code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>WEB_PORT</code>.</p>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <div class="notification" id="notification"></div>
+
+  <script>
+    // ── State ──────────────────────────────────────────────────────────────────
+    let messages = [];
+    let selectedId = null;
+
+    // ── Boot ───────────────────────────────────────────────────────────────────
+    loadMessages();
+    loadConfig();
+    setInterval(loadMessages, 5000);
+
+    // ── Data loaders ───────────────────────────────────────────────────────────
+    async function loadMessages() {
+      try {
+        const res = await fetch('/api/messages');
+        messages = await res.json();
+        renderList();
+        renderChart();
+        document.getElementById('msg-count-badge').textContent = messages.length;
+      } catch (e) {
+        console.error('Failed to load messages', e);
+      }
+    }
+
+    async function loadConfig() {
+      try {
+        const res = await fetch('/api/config');
+        const cfg = await res.json();
+        document.getElementById('cfg-host').textContent = cfg.smtp?.host || '–';
+        document.getElementById('cfg-port').textContent = cfg.smtp?.port || '–';
+      } catch (e) {
+        console.error('Failed to load config', e);
+      }
+    }
+
+    // ── Rendering ──────────────────────────────────────────────────────────────
+    function renderList() {
+      const list = document.getElementById('message-list');
+      const empty = document.getElementById('empty-state');
+      list.innerHTML = '';
+      if (messages.length === 0) {
+        empty.style.display = 'flex';
+        return;
+      }
+      empty.style.display = 'none';
+      messages.forEach(msg => {
+        const li = document.createElement('li');
+        li.dataset.id = msg.id;
+        if (msg.id === selectedId) li.classList.add('active');
+        const fromStr = Array.isArray(msg.from) ? msg.from.map(f => f.address || f.name || '?').join(', ') : String(msg.from || '–');
+        li.innerHTML = `
+          <div class="msg-subject">${escHtml(msg.subject || '(no subject)')}</div>
+          <div class="msg-meta">${escHtml(fromStr)} · ${formatDate(msg.receivedAt)}</div>
+        `;
+        li.addEventListener('click', () => selectMessage(msg.id));
+        list.appendChild(li);
+      });
+    }
+
+    function selectMessage(id) {
+      selectedId = id;
+      renderList();
+      const msg = messages.find(m => m.id === id);
+      if (!msg) return;
+
+      document.getElementById('detail-subject').textContent = msg.subject || '(no subject)';
+      document.getElementById('btn-delete').style.display = '';
+      showView('message');
+
+      const fromStr = Array.isArray(msg.from) ? msg.from.map(f => f.address || '?').join(', ') : String(msg.from || '–');
+      const toStr = Array.isArray(msg.to) ? msg.to.map(f => f.address || '?').join(', ') : String(msg.to || '–');
+
+      const content = document.getElementById('detail-content');
+      content.innerHTML = `
+        <div id="chart-section">
+          <h3>Messages received (last 24 h)</h3>
+          <svg id="timeline-chart"></svg>
+        </div>
+        <div class="msg-header-card">
+          <dl>
+            <dt>From</dt><dd>${escHtml(fromStr)}</dd>
+            <dt>To</dt><dd>${escHtml(toStr)}</dd>
+            <dt>Subject</dt><dd>${escHtml(msg.subject || '(no subject)')}</dd>
+            <dt>Received</dt><dd>${escHtml(formatDate(msg.receivedAt))}</dd>
+          </dl>
+        </div>
+        <div class="tab-bar">
+          <button class="active" onclick="switchTab(this,'tab-html')">HTML</button>
+          <button onclick="switchTab(this,'tab-text')">Plain Text</button>
+        </div>
+        <div id="tab-html" class="msg-body">
+          ${msg.html
+            ? `<iframe srcdoc="${escAttr(msg.html)}" sandbox="allow-same-origin"></iframe>`
+            : '<em style="color:#6f6f6f">No HTML content</em>'
+          }
+        </div>
+        <div id="tab-text" class="msg-body" style="display:none;">${escHtml(msg.text || '(no plain text)')}</div>
+      `;
+      renderChart();
+    }
+
+    function switchTab(btn, tabId) {
+      btn.closest('.main-content, #detail-content').querySelectorAll('[id^="tab-"]').forEach(el => el.style.display = 'none');
+      btn.closest('.tab-bar').querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      document.getElementById(tabId).style.display = '';
+      btn.classList.add('active');
+    }
+
+    // ── D3 timeline chart ──────────────────────────────────────────────────────
+    function renderChart() {
+      if (typeof d3 === 'undefined') return;
+      const svgEl = document.getElementById('timeline-chart');
+      if (!svgEl) return;
+      const parent = svgEl.parentElement;
+      const W = parent.clientWidth - 48 || 600;
+      const H = 120;
+      const margin = { top: 10, right: 20, bottom: 30, left: 40 };
+
+      d3.select(svgEl).selectAll('*').remove();
+      const svg = d3.select(svgEl).attr('width', W).attr('height', H);
+
+      const now = new Date();
+      const start = new Date(now - 24 * 60 * 60 * 1000);
+
+      const bins = d3.timeMinutes(start, now, 30);
+      const buckets = bins.map(t => ({
+        time: t,
+        count: messages.filter(m => {
+          const r = new Date(m.receivedAt);
+          return r >= t && r < new Date(t.getTime() + 30 * 60 * 1000);
+        }).length,
+      }));
+
+      const x = d3.scaleTime().domain([start, now]).range([margin.left, W - margin.right]);
+      const y = d3.scaleLinear().domain([0, d3.max(buckets, d => d.count) || 1]).range([H - margin.bottom, margin.top]);
+
+      svg.append('g').attr('transform', `translate(0,${H - margin.bottom})`)
+        .call(d3.axisBottom(x).ticks(6).tickFormat(d3.timeFormat('%H:%M')))
+        .selectAll('text').style('font-size', '10px');
+
+      svg.append('g').attr('transform', `translate(${margin.left},0)`)
+        .call(d3.axisLeft(y).ticks(3).tickFormat(d3.format('d')))
+        .selectAll('text').style('font-size', '10px');
+
+      const barW = Math.max(2, (W - margin.left - margin.right) / buckets.length - 1);
+      svg.selectAll('.bar')
+        .data(buckets)
+        .join('rect')
+        .attr('class', 'bar')
+        .attr('x', d => x(d.time))
+        .attr('y', d => y(d.count))
+        .attr('width', barW)
+        .attr('height', d => H - margin.bottom - y(d.count))
+        .attr('fill', '#0f62fe');
+    }
+
+    // ── Actions ────────────────────────────────────────────────────────────────
+    async function deleteSelected() {
+      if (!selectedId) return;
+      await fetch(`/api/messages/${selectedId}`, { method: 'DELETE' });
+      selectedId = null;
+      document.getElementById('detail-subject').textContent = 'Select a message';
+      document.getElementById('btn-delete').style.display = 'none';
+      document.getElementById('detail-content').innerHTML = `
+        <div id="chart-section"><h3>Messages received (last 24 h)</h3><svg id="timeline-chart"></svg></div>
+        <p style="color:#6f6f6f;font-size:0.875rem;">Select a message from the inbox to view its contents.</p>
+      `;
+      await loadMessages();
+      notify('Message deleted');
+    }
+
+    async function clearAll() {
+      if (!confirm('Delete all messages?')) return;
+      await fetch('/api/messages', { method: 'DELETE' });
+      selectedId = null;
+      await loadMessages();
+      notify('All messages cleared');
+    }
+
+    function showView(view) {
+      document.getElementById('view-message').style.display = view === 'message' ? 'flex' : 'none';
+      document.getElementById('view-config').style.display = view === 'config' ? 'flex' : 'none';
+    }
+
+    function notify(msg) {
+      const el = document.getElementById('notification');
+      el.textContent = msg;
+      el.style.display = 'block';
+      setTimeout(() => { el.style.display = 'none'; }, 2500);
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+    function escHtml(str) {
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    function escAttr(str) {
+      return String(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function formatDate(iso) {
+      if (!iso) return '–';
+      return new Date(iso).toLocaleString();
+    }
+  </script>
+</body>
+</html>
