@@ -213,9 +213,9 @@ class Router {
    */
   _sanitizePathSegment(segment) {
     // Allow only alphanumeric characters, hyphens, and underscores.
-    // We intentionally exclude dots to prevent hidden-file tricks and to
-    // eliminate all possible path-traversal sequences (e.g. '..' after the
-    // leading-dot strip would still contain '..' elsewhere in the string).
+    // All other characters — including dots — are replaced with '_'.
+    // Excluding dots removes hidden-file tricks (".bashrc") and all forms of
+    // path traversal ("..") in one pass without needing a separate strip step.
     let safe = String(segment).replace(/[^a-zA-Z0-9_-]/g, '_');
     // Strip leading underscores that result from leading non-alphanumeric chars.
     safe = safe.replace(/^_+/, '');
