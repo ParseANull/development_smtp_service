@@ -12,6 +12,11 @@ const staticLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const DEFAULT_ROUTING = {
+  destinations: [{ type: 'memory' }],
+  filter: { mode: 'none', patterns: [] },
+};
+
 /**
  * Create and configure the Express application.
  * @param {object} deps - Dependencies (store, smtpConfig, routingConfig)
@@ -65,8 +70,7 @@ function createApp({ store, smtpConfig = {}, routingConfig } = {}) {
 
   /** GET /api/routing – return current routing + filter configuration */
   app.get('/api/routing', (req, res) => {
-    if (!routingConfig) return res.json({ destinations: [{ type: 'memory' }], filter: { mode: 'none', patterns: [] } });
-    res.json(routingConfig.get());
+    res.json(routingConfig ? routingConfig.get() : DEFAULT_ROUTING);
   });
 
   /** PUT /api/routing – replace routing + filter configuration */
@@ -93,7 +97,7 @@ function createApp({ store, smtpConfig = {}, routingConfig } = {}) {
       return res.status(400).json({ error: '"recipient" string is required' });
     }
 
-    const cfg = routingConfig ? routingConfig.get() : { destinations: [{ type: 'memory' }], filter: { mode: 'none', patterns: [] } };
+    const cfg = routingConfig ? routingConfig.get() : DEFAULT_ROUTING;
     const filterResult = filterEngine.evaluate(recipient, cfg.filter);
 
     const destinations = cfg.destinations.map((dest) => {
