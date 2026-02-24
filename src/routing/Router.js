@@ -200,6 +200,29 @@ class Router {
   }
 
   /**
+   * Sanitise a single path segment so it cannot be used for path traversal.
+   *
+   * We remove any character that is not a letter, digit, hyphen, underscore,
+   * or dot, and strip leading dots to prevent hidden-file tricks.  An empty
+   * result is replaced with the placeholder `_` so callers always get a
+   * non-empty segment.
+   *
+   * @private
+   * @param {string} segment - Raw segment string to sanitise.
+   * @returns {string} A filesystem-safe segment.
+   */
+  _sanitizePathSegment(segment) {
+    // Allow only alphanumeric characters, hyphens, and underscores.
+    // All other characters — including dots — are replaced with '_'.
+    // Excluding dots removes hidden-file tricks (".bashrc") and all forms of
+    // path traversal ("..") in one pass without needing a separate strip step.
+    let safe = String(segment).replace(/[^a-zA-Z0-9_-]/g, '_');
+    // Strip leading underscores that result from leading non-alphanumeric chars.
+    safe = safe.replace(/^_+/, '');
+    return safe || '_';
+  }
+
+  /**
    * Build the ordered list of path segments for a stored message.
    *
    * The layout is `{email_prefix}/{email_suffix}/{timestamp}.{ext}` when the
@@ -223,7 +246,11 @@ class Router {
     const timestamp = this._formatTimestamp(message.receivedAt);
     const ext = this._getMimeExtension(message);
     const filename = `${timestamp}.${ext}`;
-    return suffix ? [prefix, suffix, filename] : [prefix, filename];
+    // We sanitise each segment independently to prevent path traversal through
+    // crafted recipient addresses (e.g. "../../etc@domain.com").
+    const safePrefix = this._sanitizePathSegment(prefix);
+    const safeSuffix = suffix !== null ? this._sanitizePathSegment(suffix) : null;
+    return safeSuffix ? [safePrefix, safeSuffix, filename] : [safePrefix, filename];
   }
 
   /**
@@ -253,11 +280,20 @@ class Router {
    * @returns {Promise<void>}
    */
   async _routeFilesystem(message, dest) {
-    const base = dest.path || './mail';
+    const base = path.resolve(dest.path || './mail');
     const subpath = this._buildStorageSubpath(message);
 
     // All segments except the last form the directory; the last is the filename.
     const dir = path.join(base, ...subpath.slice(0, -1));
+
+    // Guard against path traversal: the resolved directory must remain inside
+    // the configured base.  With sanitised segments this should always hold, but
+    // we verify explicitly as a defence-in-depth measure.
+    const resolvedDir = path.resolve(dir);
+    if (!resolvedDir.startsWith(base + path.sep) && resolvedDir !== base) {
+      throw new Error(`Filesystem destination path escapes base directory: ${resolvedDir}`);
+    }
+
     fs.mkdirSync(dir, { recursive: true });
 
     const filename = path.join(dir, subpath[subpath.length - 1]);

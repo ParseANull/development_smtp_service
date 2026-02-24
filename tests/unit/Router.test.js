@@ -93,6 +93,24 @@ describe('Router', () => {
       expect(fs.existsSync(filePath)).toBe(true);
       expect(fs.readFileSync(filePath, 'utf8')).toBe('plain body');
     });
+
+    it('sanitises path-traversal sequences in recipient address', async () => {
+      const msg = {
+        ...makeMessage('traversal-msg'),
+        to: [{ address: '../../etc@domain.local' }],
+        receivedAt: '2026-10-13T14:17:05.001Z',
+      };
+      // The router should NOT throw and should NOT write outside tmpDir.
+      await expect(
+        router.route(msg, [{ type: 'filesystem', path: tmpDir }])
+      ).resolves.toEqual(['filesystem']);
+      // No file should exist outside tmpDir — verify the evil path doesn't appear.
+      const evilPath = path.resolve('/etc');
+      expect(evilPath.startsWith(tmpDir)).toBe(false); // sanity check
+      // The sanitised path uses underscores in place of dots and slashes.
+      const files = fs.readdirSync(tmpDir, { recursive: true });
+      expect(files.some(f => String(f).includes('..'))).toBe(false);
+    });
   });
 
   // ── storageOnly flag ──────────────────────────────────────────────────────

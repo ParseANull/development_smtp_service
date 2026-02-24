@@ -105,5 +105,17 @@ describe('FilterEngine', () => {
       });
       expect(result.storageOnly).toBe(false);
     });
+
+    it('truncates a very long recipient to 256 characters before matching', () => {
+      const longAddr = 'a'.repeat(300) + '@example.com';
+      // Should not throw and should still evaluate correctly.
+      expect(() => engine.evaluate(longAddr, { mode: 'none', patterns: [] })).not.toThrow();
+      // Exact match on truncated form: pattern covering the 256-char prefix still matches.
+      const result = engine.evaluate(longAddr, {
+        mode: 'blacklist',
+        patterns: ['a{256}'],
+      });
+      expect(result.storageOnly).toBe(true);
+    });
   });
 });

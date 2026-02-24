@@ -47,6 +47,17 @@ const staticLimiter = rateLimit({
   legacyHeaders: false,   // We don't send the older X-RateLimit-* headers
 });
 
+// ── Rate limiter for mutating API endpoints ────────────────────────────────
+// PUT and DELETE calls modify server state. We cap them at 60 per minute so
+// that a runaway script or browser loop cannot thrash the routing config or
+// delete the inbox faster than a human could notice.
+const writeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 /**
  * The routing config we fall back to when no `routingConfig` instance was
  * injected (e.g. in certain unit tests). We keep it here so the API still
@@ -84,6 +95,36 @@ function createApp({ store, smtpConfig = {}, routingConfig } = {}) {
   // We register JSON body parsing globally so every route that reads req.body
   // gets a parsed JavaScript object without needing to add middleware per route.
   app.use(express.json());
+
+  // ── Security headers ────────────────────────────────────────────────────────
+  // We set a small set of baseline security headers on every response.
+  // We do this in a single middleware rather than on each route so that new
+  // routes added in the future are automatically protected.
+  app.use((req, res, next) => {
+    // Prevent MIME-type sniffing which can turn a plain-text response into an
+    // executable in some browsers.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    // Disallow embedding this UI in a foreign frame (clickjacking protection).
+    res.setHeader('X-Frame-Options', 'DENY');
+
+    // Minimal Content-Security-Policy. We allow inline scripts and styles
+    // because the SPA uses them, but we restrict other resource origins.
+    // Connections are only allowed to the same origin (the API) plus the two
+    // CDN hosts we actually use for D3 and Carbon.
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; " +
+      "script-src 'self' 'unsafe-inline' cdn.jsdelivr.net; " +
+      "style-src 'self' 'unsafe-inline' 1.www.s81c.com; " +
+      "connect-src 'self'; " +
+      "img-src 'self' data:; " +
+      "frame-src 'none'; " +
+      "object-src 'none'"
+    );
+
+    next();
+  });
 
   // We serve everything in the `public` directory as static files. This is how
   // the browser-based UI (HTML, CSS, JS) is delivered. express.static handles
@@ -125,7 +166,7 @@ function createApp({ store, smtpConfig = {}, routingConfig } = {}) {
    * We use 204 (No Content) rather than 200 because there's nothing useful to
    * return in the body after a deletion.
    */
-  app.delete('/api/messages/:id', (req, res) => {
+  app.delete('/api/messages/:id', writeLimiter, (req, res) => {
     // deleteById returns true if something was removed, false otherwise.
     // We map those outcomes to 204 and 404 respectively.
     const removed = store ? store.deleteById(req.params.id) : false;
@@ -138,7 +179,7 @@ function createApp({ store, smtpConfig = {}, routingConfig } = {}) {
    * Clear ALL messages at once. Always returns 204 — even if the store was
    * already empty, clearing an empty inbox is a no-op success, not an error.
    */
-  app.delete('/api/messages', (req, res) => {
+  app.delete('/api/messages', writeLimiter, (req, res) => {
     // We call clear() only if a store exists. Either way the response is the same.
     if (store) store.clear();
     res.status(204).end();
@@ -169,9 +210,20 @@ function createApp({ store, smtpConfig = {}, routingConfig } = {}) {
    * Return the current routing + filter configuration as JSON.
    * We fall back to DEFAULT_ROUTING so the endpoint always returns something
    * sensible even if routingConfig wasn't injected.
+   *
+   * We redact sensitive credential fields (SMTP passwords, Azure connection
+   * strings) before sending the response — these values are write-only from
+   * the client's perspective.
    */
   app.get('/api/routing', (req, res) => {
-    res.json(routingConfig ? routingConfig.get() : DEFAULT_ROUTING);
+    const cfg = routingConfig ? routingConfig.get() : DEFAULT_ROUTING;
+    // Deep-clone then redact sensitive fields so we never leak credentials.
+    const safe = JSON.parse(JSON.stringify(cfg));
+    for (const dest of safe.destinations) {
+      if (dest.pass !== undefined) dest.pass = '';
+      if (dest.connectionString !== undefined) dest.connectionString = '';
+    }
+    res.json(safe);
   });
 
   /**
@@ -180,7 +232,7 @@ function createApp({ store, smtpConfig = {}, routingConfig } = {}) {
    * We delegate validation to RoutingConfig.set(); if it throws we turn the
    * error message into a 400 response so the client knows what went wrong.
    */
-  app.put('/api/routing', (req, res) => {
+  app.put('/api/routing', writeLimiter, (req, res) => {
     // We return 503 if routingConfig wasn't injected — this endpoint can't work
     // without it, and 503 (Service Unavailable) is more informative than 500.
     if (!routingConfig) return res.status(503).json({ error: 'Routing not configured' });
@@ -191,7 +243,14 @@ function createApp({ store, smtpConfig = {}, routingConfig } = {}) {
 
       // On success we return the *new* config so the client can confirm what
       // was applied without needing a follow-up GET request.
-      res.json(routingConfig.get());
+      // We redact sensitive credential fields in the response for consistency
+      // with GET /api/routing.
+      const safe = JSON.parse(JSON.stringify(routingConfig.get()));
+      for (const dest of safe.destinations) {
+        if (dest.pass !== undefined) dest.pass = '';
+        if (dest.connectionString !== undefined) dest.connectionString = '';
+      }
+      res.json(safe);
     } catch (err) {
       // Validation failed — we surface the error message as-is. RoutingConfig
       // formats its error messages to be readable by an end user.

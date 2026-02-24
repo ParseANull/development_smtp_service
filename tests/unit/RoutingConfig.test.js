@@ -74,6 +74,36 @@ describe('RoutingConfig', () => {
       .toThrow(/Invalid RegEx pattern/);
   });
 
+  it('throws on regex pattern with nested quantifiers (ReDoS guard)', () => {
+    expect(() => config.set({ filter: { mode: 'blacklist', patterns: ['(a+)+'] } }))
+      .toThrow(/nested quantifiers/);
+  });
+
+  it('throws on filesystem path containing ".." (path traversal guard)', () => {
+    expect(() => config.set({ destinations: [{ type: 'filesystem', path: '../../etc' }] }))
+      .toThrow(/path traversal/);
+  });
+
+  it('throws on filesystem path that is not a string', () => {
+    expect(() => config.set({ destinations: [{ type: 'filesystem', path: 123 }] }))
+      .toThrow(/"filesystem" destination "path" must be a string/);
+  });
+
+  it('throws on smtp destination with empty host', () => {
+    expect(() => config.set({ destinations: [{ type: 'smtp', host: '' }] }))
+      .toThrow(/"smtp" destination "host" must be a non-empty string/);
+  });
+
+  it('throws on smtp destination with out-of-range port', () => {
+    expect(() => config.set({ destinations: [{ type: 'smtp', host: 'relay', port: 99999 }] }))
+      .toThrow(/"smtp" destination "port" must be an integer/);
+  });
+
+  it('throws on smtp destination with non-integer port', () => {
+    expect(() => config.set({ destinations: [{ type: 'smtp', host: 'relay', port: 'abc' }] }))
+      .toThrow(/"smtp" destination "port" must be an integer/);
+  });
+
   it('accepts a custom initial configuration', () => {
     const custom = new RoutingConfig({
       destinations: [{ type: 'filesystem', path: '/tmp' }],

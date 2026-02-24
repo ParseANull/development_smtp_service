@@ -529,7 +529,7 @@
         </div>
         <div id="tab-html" class="msg-body">
           ${msg.html
-            ? `<iframe srcdoc="${escAttr(msg.html)}" sandbox="allow-same-origin"></iframe>`
+            ? `<iframe srcdoc="${escAttr(msg.html)}" sandbox></iframe>`
             : '<em style="color:#6f6f6f">No HTML content</em>'
           }
         </div>
@@ -609,12 +609,12 @@
     function destLabel(dest) {
       switch (dest.type) {
         case 'memory': return 'memory (built-in inbox)';
-        case 'filesystem': return `filesystem  →  ${dest.path || './mail'}`;
-        case 'smtp': return `smtp forward  →  ${dest.host || '?'}:${dest.port || 587}`;
-        case 's3': return `s3  →  ${dest.bucket || '?'} (${dest.region || 'us-east-1'})`;
-        case 'azure': return `azure  →  ${dest.container || 'emails'}`;
-        case 'gcp': return `gcp  →  ${dest.bucket || '?'}`;
-        default: return dest.type;
+        case 'filesystem': return `filesystem  →  ${escHtml(dest.path || './mail')}`;
+        case 'smtp': return `smtp forward  →  ${escHtml(dest.host || '?')}:${escHtml(String(dest.port || 587))}`;
+        case 's3': return `s3  →  ${escHtml(dest.bucket || '?')} (${escHtml(dest.region || 'us-east-1')})`;
+        case 'azure': return `azure  →  ${escHtml(dest.container || 'emails')}`;
+        case 'gcp': return `gcp  →  ${escHtml(dest.bucket || '?')}`;
+        default: return escHtml(dest.type);
       }
     }
 
@@ -885,7 +885,7 @@
       return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
     function escAttr(str) {
-      return String(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
     function formatDate(iso) {
       if (!iso) return '–';

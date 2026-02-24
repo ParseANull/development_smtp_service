@@ -91,6 +91,9 @@ class SmtpService extends EventEmitter {
     // - allowInsecureAuth: fine for dev, but don't do this in production!
     // - authOptional: we accept mail from unauthenticated senders — we're a
     //   catch-all dev mailbox, not a secure relay.
+    // - size: we cap individual messages at 25 MB to prevent a single oversized
+    //   email from exhausting process memory (the smtp-server library enforces
+    //   this automatically and returns a 552 response to the sender).
     // - onData: we bind our _onData method so `this` inside it is always the
     //   SmtpService instance, not the raw SMTPServer.
     // - onError: we re-emit server errors on ourselves so callers only need to
@@ -98,6 +101,7 @@ class SmtpService extends EventEmitter {
     this._server = new SMTPServer({
       allowInsecureAuth,
       authOptional: true,
+      size: 26214400, // 25 MB hard limit per message
       onData: this._onData.bind(this),
       onError: (err) => this.emit('error', err),
     });
