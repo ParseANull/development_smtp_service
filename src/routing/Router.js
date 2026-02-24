@@ -160,32 +160,108 @@ class Router {
   // Each method below handles one destination type. They're all private
   // (underscore prefix) because they should only ever be called from route().
 
+  // ── Storage path helpers ────────────────────────────────────────────────────
+
   /**
-   * Write the message as a JSON file to the local filesystem.
+   * Determine the file extension from the message's content type and body.
    *
-   * We use the message's UUID as the filename so that every file is unique and
-   * can be correlated back to the message via the REST API.
+   * We check the `content-type` header first (handles xhtml), then fall back
+   * to the presence of an html body, then default to plain text.
+   *
+   * @private
+   * @param {object} message - The message object.
+   * @returns {string} File extension without leading dot (e.g. 'html', 'xhtml', 'txt').
+   */
+  _getMimeExtension(message) {
+    const ct = message.headers && (message.headers['content-type'] || message.headers['Content-Type']);
+    if (ct) {
+      const ctStr = typeof ct === 'string' ? ct : (ct.value || '');
+      if (/xhtml/i.test(ctStr)) return 'xhtml';
+      if (/html/i.test(ctStr)) return 'html';
+      if (/plain/i.test(ctStr)) return 'txt';
+    }
+    if (message.html) return 'html';
+    return 'txt';
+  }
+
+  /**
+   * Format a receivedAt ISO-8601 string as `YYYYMMDD-HHMMSSmmm`.
+   *
+   * @private
+   * @param {string} isoString - ISO-8601 timestamp (e.g. from message.receivedAt).
+   * @returns {string} Formatted timestamp (e.g. '20261013-141705001').
+   */
+  _formatTimestamp(isoString) {
+    const d = new Date(isoString);
+    const pad = (n, w = 2) => String(n).padStart(w, '0');
+    const date = `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`;
+    const time = `${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}${pad(d.getUTCMilliseconds(), 3)}`;
+    return `${date}-${time}`;
+  }
+
+  /**
+   * Build the ordered list of path segments for a stored message.
+   *
+   * The layout is `{email_prefix}/{email_suffix}/{timestamp}.{ext}` when the
+   * recipient uses plus-addressing (e.g. `user+tag@domain`), or
+   * `{email_prefix}/{timestamp}.{ext}` otherwise.
+   *
+   * We use the first recipient in `message.to` as the address to derive the
+   * directory structure from, matching the problem-statement examples.
+   *
+   * @private
+   * @param {object} message - The message object.
+   * @returns {string[]} Path segments, e.g. ['user', 'tag', '20261013-141705001.html'].
+   */
+  _buildStorageSubpath(message) {
+    const recipient = Array.isArray(message.to) ? message.to[0] : message.to;
+    const address = (recipient && recipient.address) ? recipient.address : String(recipient || '');
+    const localPart = address.split('@')[0];
+    const plusIdx = localPart.indexOf('+');
+    const prefix = plusIdx >= 0 ? localPart.slice(0, plusIdx) : localPart;
+    const suffix = plusIdx >= 0 ? localPart.slice(plusIdx + 1) : null;
+    const timestamp = this._formatTimestamp(message.receivedAt);
+    const ext = this._getMimeExtension(message);
+    const filename = `${timestamp}.${ext}`;
+    return suffix ? [prefix, suffix, filename] : [prefix, filename];
+  }
+
+  /**
+   * Return the body content to persist for a message.
+   *
+   * We prefer the HTML body over plain text so that the stored file matches
+   * the extension chosen by `_getMimeExtension`.
+   *
+   * @private
+   * @param {object} message - The message object.
+   * @returns {string} The body content to write.
+   */
+  _getBodyContent(message) {
+    return message.html || message.text || '';
+  }
+
+  /**
+   * Write the message body to the local filesystem under a structured path.
+   *
+   * The path layout follows `{base}/{email_prefix}/{email_suffix}/{timestamp}.{ext}`
+   * (or `{base}/{email_prefix}/{timestamp}.{ext}` for recipients without a `+` tag).
    *
    * @private
    * @param {object} message - The message to persist.
-   * @param {object} dest    - Destination config (must include optional `path`).
-   * @param {string} [dest.path='./mail'] - Directory to write files into.
+   * @param {object} dest    - Destination config.
+   * @param {string} [dest.path='./mail'] - Base directory to write files into.
    * @returns {Promise<void>}
    */
   async _routeFilesystem(message, dest) {
-    // We fall back to './mail' if no path was specified. mkdirSync with
-    // { recursive: true } means we create intermediate directories as needed
-    // and don't throw if the directory already exists.
-    const dir = dest.path || './mail';
+    const base = dest.path || './mail';
+    const subpath = this._buildStorageSubpath(message);
+
+    // All segments except the last form the directory; the last is the filename.
+    const dir = path.join(base, ...subpath.slice(0, -1));
     fs.mkdirSync(dir, { recursive: true });
 
-    // We construct the full file path using path.join so that it works
-    // correctly on Windows (backslashes) as well as Unix (forward slashes).
-    const filename = path.join(dir, `${message.id}.json`);
-
-    // We pretty-print with 2-space indentation so the JSON files are human-
-    // readable when a developer inspects them directly.
-    fs.writeFileSync(filename, JSON.stringify(message, null, 2));
+    const filename = path.join(dir, subpath[subpath.length - 1]);
+    fs.writeFileSync(filename, this._getBodyContent(message));
   }
 
   /**
@@ -258,14 +334,17 @@ class Router {
   // them are mandatory at startup — only install what you actually use.
 
   /**
-   * Store the message as a JSON object in an AWS S3 bucket.
+   * Store the message body in an AWS S3 bucket using the structured key layout.
+   *
+   * The key layout is `{email_prefix}/{email_suffix}/{timestamp}.{ext}` (or
+   * without the suffix segment when the recipient has no `+` tag).  The bucket
+   * name itself is the storage basepoint, so no additional prefix is needed.
    *
    * @private
    * @param {object} message              - The message to store.
    * @param {object} dest                 - Destination config.
    * @param {string} dest.bucket          - S3 bucket name.
    * @param {string} [dest.region='us-east-1'] - AWS region.
-   * @param {string} [dest.prefix='emails']   - Key prefix (folder) inside the bucket.
    * @returns {Promise<void>}
    */
   async _routeS3(message, dest) {
@@ -283,22 +362,25 @@ class Router {
     // (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY or an IAM role).
     const client = new S3Client({ region: dest.region || 'us-east-1' });
 
-    // We use the message ID as the object key, prefixed with the configured
-    // folder so that all emails end up neatly organised in the bucket.
-    const key = `${dest.prefix || 'emails'}/${message.id}.json`;
+    // Build the structured key: {email_prefix}/{email_suffix}/{timestamp}.{ext}
+    const subpath = this._buildStorageSubpath(message);
+    const key = subpath.join('/');
+    const ext = this._getMimeExtension(message);
+    const contentTypeMap = { html: 'text/html', xhtml: 'application/xhtml+xml', txt: 'text/plain' };
 
-    // We PUT the message as a JSON string with the right content type so
-    // that tools like the S3 console can render it properly.
     await client.send(new PutObjectCommand({
       Bucket: dest.bucket,
       Key: key,
-      Body: JSON.stringify(message),
-      ContentType: 'application/json',
+      Body: this._getBodyContent(message),
+      ContentType: contentTypeMap[ext] || 'text/plain',
     }));
   }
 
   /**
-   * Store the message as a JSON blob in Azure Blob Storage.
+   * Store the message body in Azure Blob Storage using the structured path layout.
+   *
+   * The blob name follows `{email_prefix}/{email_suffix}/{timestamp}.{ext}` (or
+   * without the suffix segment when the recipient has no `+` tag).
    *
    * @private
    * @param {object} message                  - The message to store.
@@ -324,25 +406,32 @@ class Router {
     const container = serviceClient.getContainerClient(dest.container || 'emails');
     await container.createIfNotExists();
 
-    // Each message gets its own blob named by its UUID + .json extension.
-    const blob = container.getBlockBlobClient(`${message.id}.json`);
-    const body = JSON.stringify(message);
+    // Build the structured blob name: {email_prefix}/{email_suffix}/{timestamp}.{ext}
+    const subpath = this._buildStorageSubpath(message);
+    const blobName = subpath.join('/');
+    const ext = this._getMimeExtension(message);
+    const contentTypeMap = { html: 'text/html', xhtml: 'application/xhtml+xml', txt: 'text/plain' };
+    const blob = container.getBlockBlobClient(blobName);
+    const body = this._getBodyContent(message);
 
-    // We pass the byte length explicitly (body.length for ASCII-safe JSON)
-    // because the Azure SDK requires it for block blob uploads.
-    await blob.upload(body, body.length, {
-      blobHTTPHeaders: { blobContentType: 'application/json' },
+    // We pass the byte length explicitly because the Azure SDK requires it for
+    // block blob uploads. Buffer.byteLength handles multi-byte characters correctly.
+    await blob.upload(body, Buffer.byteLength(body), {
+      blobHTTPHeaders: { blobContentType: contentTypeMap[ext] || 'text/plain' },
     });
   }
 
   /**
-   * Store the message as a JSON file in a Google Cloud Storage bucket.
+   * Store the message body in a Google Cloud Storage bucket using the structured
+   * path layout.
+   *
+   * The object path follows `{email_prefix}/{email_suffix}/{timestamp}.{ext}` (or
+   * without the suffix segment when the recipient has no `+` tag).
    *
    * @private
    * @param {object} message              - The message to store.
    * @param {object} dest                 - Destination config.
    * @param {string} dest.bucket          - GCS bucket name.
-   * @param {string} [dest.prefix='emails'] - Object prefix (folder) inside the bucket.
    * @returns {Promise<void>}
    */
   async _routeGcp(message, dest) {
@@ -357,11 +446,15 @@ class Router {
     // (GOOGLE_APPLICATION_CREDENTIALS or Application Default Credentials).
     const gcs = new Storage();
 
-    // We build the GCS object path with the configured prefix and the message UUID.
-    const file = gcs.bucket(dest.bucket).file(`${dest.prefix || 'emails'}/${message.id}.json`);
+    // Build the structured GCS object path: {email_prefix}/{email_suffix}/{timestamp}.{ext}
+    const subpath = this._buildStorageSubpath(message);
+    const objectPath = subpath.join('/');
+    const ext = this._getMimeExtension(message);
+    const contentTypeMap = { html: 'text/html', xhtml: 'application/xhtml+xml', txt: 'text/plain' };
+    const file = gcs.bucket(dest.bucket).file(objectPath);
 
     // file.save() uploads the string body and sets the content type header.
-    await file.save(JSON.stringify(message), { contentType: 'application/json' });
+    await file.save(this._getBodyContent(message), { contentType: contentTypeMap[ext] || 'text/plain' });
   }
 }
 
