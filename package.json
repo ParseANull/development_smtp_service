@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/app.js",
     "test": "npm run test:unit && npm run test:bdd",
-    "test:unit": "jest --testPathPattern=tests/unit",
+    "test:unit": "jest --testPathPatterns=tests/unit",
     "test:bdd": "cucumber-js tests/features/**/*.feature --require tests/features/step_definitions/**/*.js --format @cucumber/pretty-formatter",
     "lint": "eslint src tests"
   },
@@ -38,8 +38,20 @@
     "@eslint/js": "^10.0.1",
     "eslint": "^10.0.2",
     "globals": "^17.3.0",
-    "jest": "^29.7.0",
+    "jest": "^30.2.0",
     "nodemailer": "^8.0.1",
     "supertest": "^7.2.2"
+  },
+  "overrides": {
+    "test-exclude": "^8.0.0",
+    "@jest/reporters": {
+      "glob": "^11.0.0"
+    },
+    "jest-config": {
+      "glob": "^11.0.0"
+    },
+    "jest-runtime": {
+      "glob": "^11.0.0"
+    }
   }
 }
