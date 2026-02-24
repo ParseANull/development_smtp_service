@@ -27,6 +27,7 @@
   "homepage": "https://github.com/ParseANull/development_smtp_service#readme",
   "dependencies": {
     "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
     "mailparser": "^3.9.3",
     "smtp-server": "^3.18.1",
     "uuid": "^13.0.0"

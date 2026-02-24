@@ -2,6 +2,14 @@
 
 const express = require('express');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
+
+const staticLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 /**
  * Create and configure the Express application.
@@ -57,7 +65,7 @@ function createApp({ store, smtpConfig = {} } = {}) {
   });
 
   // ── SPA fallback ────────────────────────────────────────────────────────────
-  app.get('/{*path}', (req, res) => {
+  app.get('/{*path}', staticLimiter, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   });
 
